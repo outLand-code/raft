@@ -23,6 +23,7 @@ type Server struct {
 }
 
 type Rcvr interface {
+	//RequestVote invoked by candidates to gather votes
 	RequestVote(args VoteArgs, reply *VoteReply) error
 	AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error
 }
