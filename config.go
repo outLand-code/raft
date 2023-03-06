@@ -6,15 +6,26 @@ import (
 	"io/ioutil"
 	"log"
 	"regexp"
+	"time"
 )
 
 type RConfig struct {
-	Id      int      `yaml:"id"`
-	Port    int      `yaml:"port"`
-	Cluster []string `yaml:"cluster"`
+	Id                 int      `yaml:"id"`
+	Port               int      `yaml:"port"`
+	Cluster            []string `yaml:"cluster"`
+	Times              int
+	electionTimeout    int
+	heartBeatInterval  time.Duration
+	rpcClientCheckTime time.Duration
 }
 
 var Config *RConfig
+
+const (
+	ElectionBaseTimeOut = 150
+	HeartBeatInterval   = 20
+	RPCClientCheckTime  = 20
+)
 
 func init() {
 	//err := loadConfig()
@@ -24,7 +35,7 @@ func init() {
 }
 
 func NewConfig(c *RConfig) *RConfig {
-	dataCheck(c, idCheck(), clusterCheck())
+	dataCheck(c, idCheck(), clusterCheck(), addlCheck())
 	return c
 }
 
@@ -39,6 +50,9 @@ func dataCheck(c *RConfig, fn ...checkOption) {
 }
 func clusterCheck() checkOption {
 	return func(c *RConfig) error {
+		if len(c.Cluster)%2 != 0 {
+			return fmt.Errorf("the number of node is not enough ,it must be an even number\n")
+		}
 		for _, address := range c.Cluster {
 			if b, err := regexp.MatchString("^(((25[0-5]|2[0-4]d|((1\\d{2})|([1-9]?\\d)))\\.)"+
 				"{3}(25[0-5]|2[0-4]\\d|((1\\d{2})|([1-9]?\\d))))"+
@@ -56,6 +70,18 @@ func idCheck() checkOption {
 		if c.Id == 0 {
 			return fmt.Errorf("id must be greater then zero\n")
 		}
+		return nil
+	}
+}
+
+func addlCheck() checkOption {
+	return func(c *RConfig) error {
+		if c.Times == 0 {
+			c.Times = 1
+		}
+		c.electionTimeout = ElectionBaseTimeOut * c.Times
+		c.heartBeatInterval = time.Duration(HeartBeatInterval*c.Times) * time.Millisecond
+		c.rpcClientCheckTime = time.Duration(RPCClientCheckTime*c.Times) * time.Millisecond
 		return nil
 	}
 }

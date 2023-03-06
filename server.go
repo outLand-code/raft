@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/rpc"
 	"sync"
+	"time"
 )
 
 type Server struct {
@@ -13,7 +14,7 @@ type Server struct {
 	listener  net.Listener
 	rcvr      *Rcvr
 
-	rpcClients map[int]*rpc.Client
+	rpcClients []*rpc.Client
 
 	exit chan interface{}
 
@@ -46,22 +47,28 @@ func (s *Server) Start() {
 	}
 
 	go func() {
+		tick := time.NewTicker(Config.rpcClientCheckTime)
 		for {
-			conn, err := s.listener.Accept()
-			if err != nil {
-				select {
-				case <-s.exit:
-					return
-				default:
-					log.Printf("accept error:%v ,from %s\n", err, conn.RemoteAddr())
-				}
-				continue
-			}
-			go func() {
-				s.rpcServer.ServeConn(conn)
-			}()
+			s.clients()
+			<-tick.C
 		}
 	}()
+
+	for {
+		conn, err := s.listener.Accept()
+		if err != nil {
+			select {
+			case <-s.exit:
+				return
+			default:
+				log.Printf("accept error:%v ,from %s\n", err, conn.RemoteAddr())
+			}
+			continue
+		}
+		go func() {
+			s.rpcServer.ServeConn(conn)
+		}()
+	}
 }
 
 func (s *Server) Exit() {
@@ -75,4 +82,21 @@ func (s *Server) Exit() {
 	}
 	close(s.exit)
 	_ = s.listener.Close()
+}
+
+func (s *Server) clients() {
+	//log.Printf("rpc client check %v\n", s.rpcClients)
+	if s.rpcClients == nil {
+		s.rpcClients = make([]*rpc.Client, len(Config.Cluster))
+	}
+	for index, addr := range Config.Cluster {
+		if s.rpcClients[index] == nil {
+			c, err := rpc.Dial("tcp", addr)
+			if err != nil {
+				log.Printf("rpc client create error from %s,error:%v\n", addr, err)
+				continue
+			}
+			s.rpcClients[index] = c
+		}
+	}
 }

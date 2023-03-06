@@ -29,8 +29,6 @@ type Raft struct {
 
 	//store previous time of election leader
 	prevElectTime time.Time
-	//store the IDs of other Raft's instances
-	peerIds []int
 
 	mu sync.Mutex
 }
@@ -42,15 +40,16 @@ func NewRaft(id int) *Raft {
 		}
 	}
 	return &Raft{
-		id:          id,
-		state:       RFollower,
-		currentTerm: 0,
-		votedFor:    -1,
+		id:            id,
+		state:         RFollower,
+		currentTerm:   0,
+		votedFor:      -1,
+		prevElectTime: time.Now(),
 	}
 }
 
 func NewRaftWithConfig(config *RConfig) *Raft {
-	if config != nil {
+	if config == nil {
 		log.Fatal("raft config is null,please set the config\n")
 	}
 	Config = NewConfig(config)
@@ -66,7 +65,7 @@ func (r *Raft) Run() {
 
 func (r *Raft) electionTimer() {
 	electionTimeout := getElectionTimeOut()
-	log.Printf("start election timer, current term:%d , timeout value:%d ms\n", electionTimeout, r.currentTerm)
+	log.Printf("start election timer, current term:%d , timeout value:%d ms\n", r.currentTerm, electionTimeout/1000000)
 	tick := time.NewTicker(10 * time.Millisecond)
 
 	for {
@@ -75,7 +74,8 @@ func (r *Raft) electionTimer() {
 			log.Printf("election timer end ,raft current state is %s\n", transStateStr(r.state))
 			return
 		}
-		if time.Since(r.prevElectTime) > time.Duration(electionTimeout) {
+
+		if time.Since(r.prevElectTime) > electionTimeout {
 			go r.election()
 		}
 	}
@@ -85,39 +85,45 @@ func (r *Raft) electionTimer() {
 func (r *Raft) election() {
 
 	r.state = RCandidate
-	r.mu.Lock()
+	r.currentTerm += 1
 	term := r.currentTerm
-	term += 1
-	r.currentTerm = term
 	r.prevElectTime = time.Now()
-	r.mu.Unlock()
+	r.votedFor = r.id
 
 	log.Printf("election the Raft state is %s, start leader election with term:%d\n", transStateStr(r.state), term)
 	voteCount := 0
-	for id, _ := range r.peerIds {
-
+	for id := range r.server.rpcClients {
+		if r.server.rpcClients[id] == nil {
+			continue
+		}
 		go func(id int) {
 
 			args := VoteArgs{
-				term:         term,
-				candidateId:  r.id,
-				lastLogIndex: len(r.log) - 1,
-				lastLogTerm:  r.log[len(r.log)-1].term,
+				Term:         term,
+				CandidateId:  r.id,
+				LastLogIndex: len(r.log) - 1,
+				LastLogTerm:  r.getLastLogTerm(),
 			}
-			reply := &VoteReply{voteGranted: false}
+			reply := &VoteReply{VoteGranted: false}
 			err := r.server.rpcClients[id].Call(RPCRegisterName+".RequestVote", args, reply)
 			if err != nil {
 				log.Printf("RPC request is wrong ,error :%v\n", err)
 				return
 			}
-			if reply.term > r.currentTerm {
-				r.toBeFollower(reply.term)
+			log.Printf("peer ID:%d,RequestVote reply %v\n", id, reply)
+
+			if r.state != RCandidate {
 				return
 			}
-			if reply.voteGranted {
+			if reply.Term > r.currentTerm {
+				r.toBeFollower(reply.Term)
+				return
+			} else if reply.Term == r.currentTerm {
+				if reply.VoteGranted {
 
-				if voteCount += 1; voteCount*2 >= len(r.peerIds) {
-					r.toBeLeader()
+					if voteCount += 1; voteCount*2 >= len(r.server.rpcClients) {
+						r.toBeLeader()
+					}
 				}
 			}
 
@@ -127,9 +133,9 @@ func (r *Raft) election() {
 }
 
 //getElectionTimeOut return election time out, this value is between 150ms and 300ms in the Raft page
-func getElectionTimeOut() int64 {
+func getElectionTimeOut() time.Duration {
 	rand.Seed(time.Now().Unix())
-	return rand.Int63n(ElectionBaseTimeOut) + ElectionBaseTimeOut
+	return time.Duration(rand.Intn(Config.electionTimeout)+Config.electionTimeout) * time.Millisecond
 }
 
 func transStateStr(state Rstate) (strState string) {
@@ -147,13 +153,11 @@ func transStateStr(state Rstate) (strState string) {
 }
 
 func (r *Raft) toBeFollower(term int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.state == RFollower {
-		return
-	}
+
 	r.currentTerm = term
 	r.state = RFollower
+	r.votedFor = -1
+	r.prevElectTime = time.Now()
 	go r.electionTimer()
 	log.Printf("toBeFollower the Raft state is %s\n", transStateStr(r.state))
 
@@ -162,25 +166,28 @@ func (r *Raft) toBeFollower(term int) {
 func (r *Raft) toBeLeader() {
 
 	r.state = RLeader
-	tick := time.NewTicker(10 * time.Millisecond)
+	tick := time.NewTicker(Config.heartBeatInterval)
 	log.Printf("toBeLeader the Raft state is %s and begin to start send heartbeat\n", transStateStr(r.state))
 	for {
 
-		for id := range r.peerIds {
+		for id := range r.server.rpcClients {
+			if r.server.rpcClients[id] == nil {
+				continue
+			}
 			go func(id int) {
 				heartbeat := AppendEntriesArgs{
-					term:         r.currentTerm,
-					leaderId:     r.id,
-					prevLogIndex: -1,
-					prevLogTerm:  -1,
-					leaderCommit: -1,
-					entries:      nil,
+					Term:         r.currentTerm,
+					LeaderId:     r.id,
+					PrevLogIndex: -1,
+					PrevLogTerm:  -1,
+					LeaderCommit: -1,
+					Entries:      nil,
 				}
-				reply := &AppendEntriesReply{success: false}
+				reply := &AppendEntriesReply{Success: false}
 				if err := r.server.rpcClients[id].Call(RPCRegisterName+".AppendEntries", heartbeat, reply); err == nil {
-
-					if reply.term > r.currentTerm {
-						r.toBeFollower(reply.term)
+					log.Printf("peer ID:%d,AppendEntries reply %v\n", id, reply)
+					if reply.Term > r.currentTerm {
+						r.toBeFollower(reply.Term)
 						return
 					}
 
@@ -201,14 +208,23 @@ func (r *Raft) toBeLeader() {
 // which means that the length of Raft's logs should equal to Args's lastLogIndex and the last term in Raft's logs equal
 // to Args's lastLogTerm;
 func (r *Raft) RequestVote(args VoteArgs, reply *VoteReply) error {
+
 	log.Printf("RequestVote args is %v,current Raft :%v\n", args, r)
-	if args.term < r.currentTerm {
-		reply.voteGranted = false
-	} else if (r.votedFor == -1 || r.votedFor == args.candidateId) &&
-		args.lastLogIndex == len(r.log) && args.lastLogTerm == r.log[len(r.log)-1].term {
-		reply.voteGranted = true
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if args.Term > r.currentTerm {
+		r.toBeFollower(args.Term)
 	}
-	reply.term = r.currentTerm
+	if args.Term < r.currentTerm {
+		reply.VoteGranted = false
+	} else if args.Term == r.currentTerm && (r.votedFor == -1 || r.votedFor == args.CandidateId) {
+		reply.VoteGranted = true
+		r.votedFor = args.CandidateId
+		r.prevElectTime = time.Now()
+	}
+	reply.Term = r.currentTerm
 	return nil
 }
 
@@ -216,17 +232,31 @@ func (r *Raft) RequestVote(args VoteArgs, reply *VoteReply) error {
 //if Raft's current term  greater than Args's term ,set voteGranted value false;
 //Finally , update the value of Raft's prevElectTime to current time if reply true
 func (r *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error {
-	log.Printf("AppendEntries args is %v,current Raft :%v\n", args, r)
 
-	reply.term = r.currentTerm
-	reply.success = true
-	if args.term < r.currentTerm {
-		reply.success = false
+	//log.Printf("AppendEntries args is %v,current Raft :%v\n", args, r)
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if args.Term > r.currentTerm {
+		r.toBeFollower(args.Term)
+	} else if args.Term == r.currentTerm {
+		if r.state != RFollower {
+			r.toBeFollower(args.Term)
+		}
+		reply.Success = true
 	}
 
-	if reply.success {
+	if reply.Success {
 		r.prevElectTime = time.Now()
 	}
-
+	reply.Term = r.currentTerm
 	return nil
+}
+
+func (r *Raft) getLastLogTerm() int {
+	if len(r.log) == 0 {
+		return -1
+	}
+	return r.log[len(r.log)-1].Term
 }
