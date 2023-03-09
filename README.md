@@ -1,6 +1,6 @@
 # Raft
-        Raft is a more simple and easy to understand distributed algorithm,
-    which mainly solves the consistency problem in distribution.it can ensure
+        Raft is a more simple and easy to understand distributed algorithm,which mainly solves the consistency
+    problem in distribution.it can ensure
     the log is identical to other servers's log ,so it is usually used for
     distributed storage system and distributed task scheduling system.
 
