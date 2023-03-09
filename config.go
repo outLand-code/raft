@@ -22,9 +22,12 @@ type RConfig struct {
 var Config *RConfig
 
 const (
+	//ElectionBaseTimeOut the basic value of election timer's is 150 ms ,and in practical system is between 150ms and 300ms
 	ElectionBaseTimeOut = 150
-	HeartBeatInterval   = 20
-	RPCClientCheckTime  = 20
+	//HeartBeatInterval the value is the interval between sending heartbeat and next time
+	HeartBeatInterval = 20
+	//RPCClientCheckTime how much time to check RPC client
+	RPCClientCheckTime = 20
 )
 
 func init() {

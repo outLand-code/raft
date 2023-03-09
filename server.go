@@ -26,6 +26,10 @@ type Rcvr interface {
 	RequestVote(args VoteArgs, reply *VoteReply) error
 	//AppendEntries invoked by leader to replicate log entries ,also used as heartbeat
 	AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error
+	//InstallSnapshot invoked by leader to send chunks of snapshot to a follower.leader always send chunks in order.
+	InstallSnapshot(args InstallSnapshotArgs, reply *InstallSnapshotReply) error
+	//SetNewLogEntry invoked by client to send a command to server
+	SetNewLogEntry(args Command, reply *ClientResp) error
 }
 
 func NewServer(rcvr *Rcvr) *Server {
@@ -99,4 +103,8 @@ func (s *Server) clients() {
 			s.rpcClients[index] = c
 		}
 	}
+}
+
+func (s *Server) getListenAddr() string {
+	return s.listener.Addr().String()
 }

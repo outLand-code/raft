@@ -39,12 +39,18 @@ func NewRaft(id int) *Raft {
 			log.Fatalf("load config error:%v\n", err)
 		}
 	}
+	initLen := len(Config.Cluster)
 	return &Raft{
 		id:            id,
 		state:         RFollower,
 		currentTerm:   0,
 		votedFor:      -1,
 		prevElectTime: time.Now(),
+		commitIndex:   -1,
+		lastApplied:   -1,
+		nextIndex:     make([]int, initLen),
+		matchIndex:    InitIntArray(initLen, -1),
+		log:           []LogEntry{},
 	}
 }
 
@@ -97,12 +103,12 @@ func (r *Raft) election() {
 			continue
 		}
 		go func(id int) {
-
+			lastIndex, lastTerm := r.getLastLogIndexAndTerm()
 			args := VoteArgs{
 				Term:         term,
 				CandidateId:  r.id,
-				LastLogIndex: len(r.log) - 1,
-				LastLogTerm:  r.getLastLogTerm(),
+				LastLogIndex: lastIndex,
+				LastLogTerm:  lastTerm,
 			}
 			reply := &VoteReply{VoteGranted: false}
 			err := r.server.rpcClients[id].Call(RPCRegisterName+".RequestVote", args, reply)
@@ -175,20 +181,46 @@ func (r *Raft) toBeLeader() {
 				continue
 			}
 			go func(id int) {
+				nextIndex := r.nextIndex[id]
+				prevIndex := nextIndex - 1
+				prevTerm := 0
+				if prevIndex > -1 {
+					prevTerm = r.log[prevIndex].Term
+				}
+
 				heartbeat := AppendEntriesArgs{
 					Term:         r.currentTerm,
 					LeaderId:     r.id,
-					PrevLogIndex: -1,
-					PrevLogTerm:  -1,
-					LeaderCommit: -1,
-					Entries:      nil,
+					PrevLogIndex: prevIndex,
+					PrevLogTerm:  prevTerm,
+					LeaderCommit: r.commitIndex,
+					Entries:      r.log[nextIndex:],
 				}
 				reply := &AppendEntriesReply{Success: false}
 				if err := r.server.rpcClients[id].Call(RPCRegisterName+".AppendEntries", heartbeat, reply); err == nil {
 					log.Printf("peer ID:%d,AppendEntries reply %v\n", id, reply)
+					log.Printf("peer ID:%d,AppendEntries args %v\n", id, heartbeat)
 					if reply.Term > r.currentTerm {
 						r.toBeFollower(reply.Term)
 						return
+					}
+					if reply.Success {
+
+						r.nextIndex[id] += len(heartbeat.Entries)
+						r.matchIndex[id] = r.nextIndex[id] - 1
+						matchCount := 0
+						for _, mi := range r.matchIndex {
+							if mi > nextIndex {
+								matchCount++
+							}
+						}
+						if matchCount*2 >= len(r.matchIndex) {
+							r.commitIndex += 1
+						}
+
+					} else {
+						log.Printf("peer ID:%d reply false ,the trem and index of the log is mismatching\n", id)
+						r.nextIndex[id] = nextIndex - 1
 					}
 
 				} else {
@@ -199,6 +231,10 @@ func (r *Raft) toBeLeader() {
 		}
 		<-tick.C
 	}
+
+}
+
+func (r *Raft) commit() {
 
 }
 
@@ -214,12 +250,20 @@ func (r *Raft) RequestVote(args VoteArgs, reply *VoteReply) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	reply.VoteGranted = false
 	if args.Term > r.currentTerm {
 		r.toBeFollower(args.Term)
 	}
-	if args.Term < r.currentTerm {
-		reply.VoteGranted = false
-	} else if args.Term == r.currentTerm && (r.votedFor == -1 || r.votedFor == args.CandidateId) {
+
+	//only Args' term equals the Raft's current term is meaningful,other situations will reply false
+
+	//if args.Term < r.currentTerm {
+	//	reply.VoteGranted = false
+	//}
+
+	lastIndex, lastTerm := r.getLastLogIndexAndTerm()
+	if args.Term == r.currentTerm && (r.votedFor == -1 || r.votedFor == args.CandidateId) &&
+		args.LastLogTerm == lastTerm && args.LastLogIndex == lastIndex {
 		reply.VoteGranted = true
 		r.votedFor = args.CandidateId
 		r.prevElectTime = time.Now()
@@ -233,11 +277,12 @@ func (r *Raft) RequestVote(args VoteArgs, reply *VoteReply) error {
 //Finally , update the value of Raft's prevElectTime to current time if reply true
 func (r *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) error {
 
-	//log.Printf("AppendEntries args is %v,current Raft :%v\n", args, r)
+	log.Printf("AppendEntries args is %v,current Raft :%v\n", args, r)
 
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
+	reply.Success = false
 	if args.Term > r.currentTerm {
 		r.toBeFollower(args.Term)
 	} else if args.Term == r.currentTerm {
@@ -247,16 +292,60 @@ func (r *Raft) AppendEntries(args AppendEntriesArgs, reply *AppendEntriesReply) 
 		reply.Success = true
 	}
 
-	if reply.Success {
-		r.prevElectTime = time.Now()
+	if args.PrevLogTerm == r.currentTerm && args.PrevLogIndex > len(r.log) {
+		reply.Success = false
+	} else {
+		if args.PrevLogIndex > -1 {
+			prevLog := r.log[args.PrevLogIndex]
+			if prevLog.Term != args.PrevLogTerm {
+				r.log = r.log[0 : args.PrevLogIndex-1]
+				reply.Success = false
+			}
+		}
 	}
+
+	if reply.Success {
+		r.votedFor = args.LeaderId
+		r.prevElectTime = time.Now()
+		if args.Entries != nil && len(args.Entries) > 0 {
+			r.log = append(r.log, args.Entries...)
+		}
+
+		if args.LeaderCommit > r.commitIndex {
+			r.commitIndex = Min(args.LeaderCommit, len(r.log)-1)
+		}
+	}
+	log.Printf("the Raft log:%v\n", r.log)
 	reply.Term = r.currentTerm
 	return nil
 }
 
-func (r *Raft) getLastLogTerm() int {
-	if len(r.log) == 0 {
-		return -1
+func (r *Raft) InstallSnapshot(args InstallSnapshotArgs, reply *InstallSnapshotReply) error {
+
+	return nil
+}
+
+func (r *Raft) SetNewLogEntry(args Command, reply *ClientResp) error {
+	if r.state == RLeader {
+		args.Term = r.currentTerm
+		r.log = append(r.log, LogEntry{Term: r.currentTerm, Command: args})
+		reply.Success = true
+	} else {
+		reply.LeaderAddress = Config.Cluster[r.votedFor]
+		reply.Success = false
 	}
-	return r.log[len(r.log)-1].Term
+
+	return nil
+}
+
+func (r *Raft) getLastLogIndexAndTerm() (index int, term int) {
+	l := len(r.log)
+	if l == 0 {
+		index = -1
+		term = -1
+	} else {
+		index = l - 1
+		term = r.log[l-1].Term
+	}
+	return
 }

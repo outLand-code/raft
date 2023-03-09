@@ -35,5 +35,34 @@ type AppendEntriesReply struct {
 
 type LogEntry struct {
 	Term    int
-	Command interface{}
+	Command Command
+}
+
+type Command struct {
+	Term int
+	KeyValuePair
+}
+
+type InstallSnapshotArgs struct {
+	Term              int
+	LeaderId          int
+	LastIncludedIndex int
+	LastIncludedTerm  int
+	Offset            int
+	Data              []byte
+	Done              bool
+}
+
+type InstallSnapshotReply struct {
+	Term int
+}
+
+type KeyValuePair struct {
+	Key   string
+	Value interface{}
+}
+
+type ClientResp struct {
+	Success       bool
+	LeaderAddress string
 }
