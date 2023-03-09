@@ -33,7 +33,8 @@ type Raft struct {
 	mu sync.Mutex
 }
 
-func NewRaft(id int) *Raft {
+//NewRaft if global Config is null  the Raft created with local config file
+func NewRaft() *Raft {
 	if Config == nil {
 		if err := loadConfig(); err != nil {
 			log.Fatalf("load config error:%v\n", err)
@@ -41,7 +42,7 @@ func NewRaft(id int) *Raft {
 	}
 	initLen := len(Config.Cluster)
 	return &Raft{
-		id:            id,
+		id:            Config.Id,
 		state:         RFollower,
 		currentTerm:   0,
 		votedFor:      -1,
@@ -54,12 +55,13 @@ func NewRaft(id int) *Raft {
 	}
 }
 
+//NewRaftWithConfig the Raft created with custom configuration
 func NewRaftWithConfig(config *RConfig) *Raft {
 	if config == nil {
 		log.Fatal("raft config is null,please set the config\n")
 	}
 	Config = NewConfig(config)
-	return NewRaft(Config.Id)
+	return NewRaft()
 }
 
 func (r *Raft) Run() {
@@ -69,6 +71,10 @@ func (r *Raft) Run() {
 	r.server.Start()
 }
 
+//electionTimer create a election timer,
+//when current time is greater than last time of election leader,it will go a new round of election leader;
+//when the Raft receive the heartbeat from leader,the last time of election leader will be reset,
+//so the timer is working until the Raft become a leader or other situation happen
 func (r *Raft) electionTimer() {
 	electionTimeout := getElectionTimeOut()
 	log.Printf("start election timer, current term:%d , timeout value:%d ms\n", r.currentTerm, electionTimeout/1000000)
@@ -88,6 +94,8 @@ func (r *Raft) electionTimer() {
 
 }
 
+//election when a round of election leader happened, the term plus 1 and send RequestVote RPCs to other followers,
+//if the Raft receives true from majority of followers,becomes  leader.
 func (r *Raft) election() {
 
 	r.state = RCandidate
@@ -138,26 +146,7 @@ func (r *Raft) election() {
 
 }
 
-//getElectionTimeOut return election time out, this value is between 150ms and 300ms in the Raft page
-func getElectionTimeOut() time.Duration {
-	rand.Seed(time.Now().Unix())
-	return time.Duration(rand.Intn(Config.electionTimeout)+Config.electionTimeout) * time.Millisecond
-}
-
-func transStateStr(state Rstate) (strState string) {
-	switch state {
-	case RFollower:
-		strState = "Follower"
-	case RCandidate:
-		strState = "Candidate"
-	case RLeader:
-		strState = "Leader"
-	default:
-		strState = "Unknown"
-	}
-	return
-}
-
+//toBeFollower Raft becomes a follower,and create a new election timer.
 func (r *Raft) toBeFollower(term int) {
 
 	r.currentTerm = term
@@ -169,10 +158,13 @@ func (r *Raft) toBeFollower(term int) {
 
 }
 
+//toBeLeader when the Raft becomes leader ,it should send AppendEntries RPCs to other followers
+//per 20ms (the value of Config's heartbeatInterval),
+//and send the new log entries to other followers when the Raft receives a request from clients.
 func (r *Raft) toBeLeader() {
 
 	r.state = RLeader
-	tick := time.NewTicker(Config.heartBeatInterval)
+	tick := time.NewTicker(Config.heartbeatInterval)
 	log.Printf("toBeLeader the Raft state is %s and begin to start send heartbeat\n", transStateStr(r.state))
 	for {
 
@@ -325,6 +317,28 @@ func (r *Raft) InstallSnapshot(args InstallSnapshotArgs, reply *InstallSnapshotR
 	return nil
 }
 
+//getElectionTimeOut return election time out, this value is between 150ms and 300ms in the Raft page
+func getElectionTimeOut() time.Duration {
+	rand.Seed(time.Now().Unix())
+	return time.Duration(rand.Intn(Config.electionTimeout)+Config.electionTimeout) * time.Millisecond
+}
+
+func transStateStr(state Rstate) (strState string) {
+	switch state {
+	case RFollower:
+		strState = "Follower"
+	case RCandidate:
+		strState = "Candidate"
+	case RLeader:
+		strState = "Leader"
+	default:
+		strState = "Unknown"
+	}
+	return
+}
+
+//SetNewLogEntry client send SetNewLogEntry RPC to any one of Raft servers,
+//reply false and return leader's address if the Raft be requested is not leader
 func (r *Raft) SetNewLogEntry(args Command, reply *ClientResp) error {
 	if r.state == RLeader {
 		args.Term = r.currentTerm

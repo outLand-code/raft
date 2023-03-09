@@ -21,6 +21,7 @@ type Server struct {
 	mu sync.Mutex
 }
 
+//Rcvr define
 type Rcvr interface {
 	//RequestVote invoked by candidates to gather votes
 	RequestVote(args VoteArgs, reply *VoteReply) error
@@ -32,6 +33,7 @@ type Rcvr interface {
 	SetNewLogEntry(args Command, reply *ClientResp) error
 }
 
+//NewServer create a new RPC server
 func NewServer(rcvr *Rcvr) *Server {
 	return &Server{
 		rcvr: rcvr,
@@ -39,6 +41,7 @@ func NewServer(rcvr *Rcvr) *Server {
 	}
 }
 
+// Start
 func (s *Server) Start() {
 	serv := rpc.NewServer()
 	_ = serv.RegisterName(RPCRegisterName, *s.rcvr)

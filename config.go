@@ -10,23 +10,25 @@ import (
 )
 
 type RConfig struct {
-	Id                 int      `yaml:"id"`
-	Port               int      `yaml:"port"`
-	Cluster            []string `yaml:"cluster"`
+	Id      int      `yaml:"id"`
+	Port    int      `yaml:"port"`
+	Cluster []string `yaml:"cluster"`
+	//Times default 1 where be created,it impacts the interval of election leader,sending heartbeat and check RPC clients
 	Times              int
 	electionTimeout    int
-	heartBeatInterval  time.Duration
+	heartbeatInterval  time.Duration
 	rpcClientCheckTime time.Duration
 }
 
+// Config the global configuration
 var Config *RConfig
 
 const (
 	//ElectionBaseTimeOut the basic value of election timer's is 150 ms ,and in practical system is between 150ms and 300ms
 	ElectionBaseTimeOut = 150
-	//HeartBeatInterval the value is the interval between sending heartbeat and next time
-	HeartBeatInterval = 20
-	//RPCClientCheckTime how much time to check RPC client
+	//HeartbeatInterval the value is the interval between sending heartbeat and next time
+	HeartbeatInterval = 20
+	//RPCClientCheckTime how much time to check  whether RPC client is alive
 	RPCClientCheckTime = 20
 )
 
@@ -77,18 +79,20 @@ func idCheck() checkOption {
 	}
 }
 
+//addlCheck set interval's values of election timer 、sending heartbeat and check RPC clients
 func addlCheck() checkOption {
 	return func(c *RConfig) error {
 		if c.Times == 0 {
 			c.Times = 1
 		}
 		c.electionTimeout = ElectionBaseTimeOut * c.Times
-		c.heartBeatInterval = time.Duration(HeartBeatInterval*c.Times) * time.Millisecond
+		c.heartbeatInterval = time.Duration(HeartbeatInterval*c.Times) * time.Millisecond
 		c.rpcClientCheckTime = time.Duration(RPCClientCheckTime*c.Times) * time.Millisecond
 		return nil
 	}
 }
 
+// loadConfig read local config from app.yml
 func loadConfig() error {
 
 	byt, err := ioutil.ReadFile("app.yml")
@@ -100,7 +104,7 @@ func loadConfig() error {
 	if err != nil {
 		return err
 	}
-	fmt.Println(c)
+	log.Printf("read local config from app.yml ,the config:%v\n", c)
 	Config = NewConfig(&c)
 	return nil
 }
