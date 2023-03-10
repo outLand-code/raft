@@ -21,7 +21,7 @@ type Server struct {
 	mu sync.Mutex
 }
 
-//Rcvr define
+//Rcvr define these methods need to be implemented by Raft
 type Rcvr interface {
 	//RequestVote invoked by candidates to gather votes
 	RequestVote(args VoteArgs, reply *VoteReply) error
@@ -41,7 +41,7 @@ func NewServer(rcvr *Rcvr) *Server {
 	}
 }
 
-// Start
+// Start create a RPC server
 func (s *Server) Start() {
 	serv := rpc.NewServer()
 	_ = serv.RegisterName(RPCRegisterName, *s.rcvr)

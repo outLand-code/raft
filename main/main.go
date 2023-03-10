@@ -1,12 +1,8 @@
 package main
 
-import (
-	"fmt"
-	"raft"
-)
+import "raft"
 
 func main() {
-
-	fmt.Println(raft.Config)
-
+	//load configuration from app.yml and create a Raft server
+	raft.NewRaft().Run()
 }
