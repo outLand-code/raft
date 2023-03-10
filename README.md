@@ -9,4 +9,4 @@ key-value store.
 
   Read [the Raft Paper](https://raft.github.io/raft.pdf) is important for Learning Raft at first,which can help us better understand the
 Raft's mechanism,and [the Raft website](https://raft.github.io/) can show more details by playing with the visualization,
-and [Eli Bendersky's website](https://eli.thegreenplace.net/2020/implementing-raft-part-0-introduction/) can help us how to implement it.
+and [Eli Bendersky's website](https://eli.thegreenplace.net/2020/implementing-raft-part-0-introduction/) can help us to implement it.
