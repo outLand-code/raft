@@ -77,13 +77,22 @@ func (r *Raft) Run() {
 //so the timer is working until the Raft become a leader or other situation happen
 func (r *Raft) electionTimer() {
 	electionTimeout := getElectionTimeOut()
-	log.Printf("start election timer, current term:%d , timeout value:%d ms\n", r.currentTerm, electionTimeout/1000000)
+
+	r.mu.Lock()
+	curTerm := r.currentTerm
+	r.mu.Unlock()
+
+	log.Printf("start election timer, current term:%d , timeout value:%d ms\n", curTerm, electionTimeout/1000000)
 	tick := time.NewTicker(10 * time.Millisecond)
 
 	for {
 		<-tick.C
 		if r.state != RFollower && r.state != RCandidate {
 			log.Printf("election timer end ,raft current state is %s\n", transStateStr(r.state))
+			return
+		}
+		if curTerm != r.currentTerm {
+			log.Printf("the election timer's term:%d  is not equals to current term %d\n", curTerm, r.currentTerm)
 			return
 		}
 

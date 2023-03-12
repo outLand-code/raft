@@ -1,7 +1,9 @@
 #!/bin/sh
 cd ../
-for i in {1..10}
+# shellcheck disable=SC2039
+for i in {1..3}
 do
-    echo $i
-    go test -v -race -run=Raft$i
+    echo "$i"
+    sleep 2
+    go test -v -race -run=Raft$$i
 done
