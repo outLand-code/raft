@@ -78,6 +78,8 @@ func (r *Raft) Run() {
 func (r *Raft) electionTimer() {
 	electionTimeout := getElectionTimeOut()
 
+	//when some action happen (e.g. toBeFollower ,the Raft's state trans to Follower and term is changed),
+	//Raft run a timer of election ,so old timer should be closed
 	r.mu.Lock()
 	curTerm := r.currentTerm
 	r.mu.Unlock()
@@ -91,6 +93,7 @@ func (r *Raft) electionTimer() {
 			log.Printf("election timer end ,raft current state is %s\n", transStateStr(r.state))
 			return
 		}
+		//when the term of timer is not equals to Raft's current term ,the timer should be closed.
 		if curTerm != r.currentTerm {
 			log.Printf("the election timer's term:%d  is not equals to current term %d\n", curTerm, r.currentTerm)
 			return
