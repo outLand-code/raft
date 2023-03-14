@@ -49,7 +49,7 @@ loop:
 		log.Fatalf("create client error:%v\n", err)
 	}
 	args := Command{
-		KeyValuePair: KeyValuePair{Key: "x", Value: "2"},
+		KeyValuePair: KeyValuePair{Key: "x", Value: "5"},
 	}
 	reply := &ClientResp{Success: false}
 	if err := client.Call("RaftSpace.SetNewLogEntry", args, reply); err == nil {

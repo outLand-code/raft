@@ -5,6 +5,7 @@ const (
 	RFollower       Rstate = iota
 	RCandidate
 	RLeader
+	RDead
 )
 
 type Rstate int

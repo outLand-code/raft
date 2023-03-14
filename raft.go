@@ -29,6 +29,8 @@ type Raft struct {
 
 	//store previous time of election leader
 	prevElectTime time.Time
+	//value of election timeout
+	electionTimeOut time.Duration
 
 	mu sync.Mutex
 }
@@ -71,37 +73,34 @@ func (r *Raft) Run() {
 	r.server.Start()
 }
 
-//electionTimer create a election timer,
+//electionTimer create an election timer,
 //when current time is greater than last time of election leader,it will go a new round of election leader;
 //when the Raft receive the heartbeat from leader,the last time of election leader will be reset,
-//so the timer is working until the Raft become a leader or other situation happen
+//so the timer is working until the Raft's state become Dead or other situation happen
 func (r *Raft) electionTimer() {
-	electionTimeout := getElectionTimeOut()
 
-	//when some action happen (e.g. toBeFollower ,the Raft's state trans to Follower and term is changed),
-	//Raft run a timer of election ,so old timer should be closed
-	r.mu.Lock()
-	curTerm := r.currentTerm
-	r.mu.Unlock()
-
-	log.Printf("start election timer, current term:%d , timeout value:%d ms\n", curTerm, electionTimeout/1000000)
+	r.electionTimeOut = getElectionTimeOut()
 	tick := time.NewTicker(10 * time.Millisecond)
+	curTerm := r.currentTerm
+	log.Printf("start election timer, current term:%d , timeout value:%d ms\n", r.currentTerm, r.electionTimeOut/1000000)
 
 	for {
-		<-tick.C
-		if r.state != RFollower && r.state != RCandidate {
-			log.Printf("election timer end ,raft current state is %s\n", transStateStr(r.state))
-			return
-		}
-		//when the term of timer is not equals to Raft's current term ,the timer should be closed.
+		electionTimeout := r.electionTimeOut
+
 		if curTerm != r.currentTerm {
-			log.Printf("the election timer's term:%d  is not equals to current term %d\n", curTerm, r.currentTerm)
+			log.Printf("the term was changed %d -> %d ,current state %s\n", curTerm, r.currentTerm, transStateStr(r.state))
+			curTerm = r.currentTerm
+		}
+		if r.state == RDead {
+			log.Printf("election timer end ,raft current state is %s\n", transStateStr(r.state))
 			return
 		}
 
 		if time.Since(r.prevElectTime) > electionTimeout {
-			go r.election()
+			r.election()
 		}
+
+		<-tick.C
 	}
 
 }
@@ -148,24 +147,26 @@ func (r *Raft) election() {
 				if reply.VoteGranted {
 
 					if voteCount += 1; voteCount*2 >= len(r.server.rpcClients) {
-						r.toBeLeader()
+						go r.toBeLeader()
 					}
 				}
 			}
 
 		}(id)
 	}
+	//refresh the value of election timeout
+	r.electionTimeOut = getElectionTimeOut()
 
 }
 
-//toBeFollower Raft becomes a follower,and create a new election timer.
+//toBeFollower Raft becomes a follower,and refresh the value of election timeout.
 func (r *Raft) toBeFollower(term int) {
 
 	r.currentTerm = term
 	r.state = RFollower
 	r.votedFor = -1
 	r.prevElectTime = time.Now()
-	go r.electionTimer()
+	r.electionTimeOut = getElectionTimeOut()
 	log.Printf("toBeFollower the Raft state is %s\n", transStateStr(r.state))
 
 }
@@ -175,11 +176,17 @@ func (r *Raft) toBeFollower(term int) {
 //and send the new log entries to other followers when the Raft receives a request from clients.
 func (r *Raft) toBeLeader() {
 
+	//when the action happened,may be multiple goroutines execute this method,but just one is needed
+	r.mu.Lock()
+	if r.state == RLeader {
+		r.mu.Unlock()
+		return
+	}
 	r.state = RLeader
+	r.mu.Unlock()
 	tick := time.NewTicker(Config.heartbeatInterval)
 	log.Printf("toBeLeader the Raft state is %s and begin to start send heartbeat\n", transStateStr(r.state))
 	for {
-
 		for id := range r.server.rpcClients {
 			if r.server.rpcClients[id] == nil {
 				continue
@@ -234,6 +241,7 @@ func (r *Raft) toBeLeader() {
 			}(id)
 		}
 		<-tick.C
+		r.prevElectTime = time.Now()
 	}
 
 }
@@ -343,6 +351,8 @@ func transStateStr(state Rstate) (strState string) {
 		strState = "Candidate"
 	case RLeader:
 		strState = "Leader"
+	case RDead:
+		strState = "Dead"
 	default:
 		strState = "Unknown"
 	}
