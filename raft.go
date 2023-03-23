@@ -187,6 +187,9 @@ func (r *Raft) toBeLeader() {
 	tick := time.NewTicker(Config.heartbeatInterval)
 	log.Printf("toBeLeader the Raft state is %s and begin to start send heartbeat\n", transStateStr(r.state))
 	for {
+		if r.state != RLeader {
+			return
+		}
 		for id := range r.server.rpcClients {
 			if r.server.rpcClients[id] == nil {
 				continue
