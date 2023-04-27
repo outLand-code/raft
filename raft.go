@@ -26,6 +26,8 @@ type Raft struct {
 	currentTerm int
 	votedFor    int
 	log         []LogEntry
+	//store the Raft‘s currentTerm 、voteFor and log
+	storage *Storage
 
 	//store previous time of election leader
 	prevElectTime time.Time
@@ -54,6 +56,7 @@ func NewRaft() *Raft {
 		nextIndex:     make([]int, initLen),
 		matchIndex:    InitIntArray(initLen, -1),
 		log:           []LogEntry{},
+		storage:       NewStorage(),
 	}
 }
 
@@ -70,6 +73,8 @@ func (r *Raft) Run() {
 	var rcvr Rcvr = r
 	r.server = NewServer(&rcvr)
 	go r.electionTimer()
+	r.loadFromStorage()
+	go r.storage.persistentToDisk()
 	r.server.Start()
 }
 
@@ -230,6 +235,7 @@ func (r *Raft) toBeLeader() {
 						}
 						if matchCount*2 >= len(r.matchIndex) {
 							r.commitIndex += 1
+							r.commit()
 						}
 
 					} else {
@@ -250,7 +256,11 @@ func (r *Raft) toBeLeader() {
 }
 
 func (r *Raft) commit() {
-
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.state == RLeader {
+		r.persistent()
+	}
 }
 
 // RequestVote the receiver should implement below:

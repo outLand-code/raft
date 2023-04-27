@@ -5,14 +5,17 @@ import (
 	"gopkg.in/yaml.v2"
 	"io/ioutil"
 	"log"
+	"os"
 	"regexp"
 	"time"
 )
 
 type RConfig struct {
-	Id      int      `yaml:"id"`
-	Port    int      `yaml:"port"`
-	Cluster []string `yaml:"cluster"`
+	Id        int      `yaml:"id"`
+	Port      int      `yaml:"port"`
+	Cluster   []string `yaml:"cluster"`
+	StorePath string   `yaml:"storePath"`
+	StoreTime int      `yaml:"storeTime"`
 	//Times default 1 where be created,it impacts the interval of election leader,sending heartbeat and check RPC clients
 	Times              int
 	electionTimeout    int
@@ -30,6 +33,8 @@ const (
 	HeartbeatInterval = 20
 	//RPCClientCheckTime how much time to check  whether RPC client is alive
 	RPCClientCheckTime = 20
+	//StoreTimeInterval the value is the interval to store data
+	StoreTimeInterval = 60
 )
 
 func init() {
@@ -40,7 +45,7 @@ func init() {
 }
 
 func NewConfig(c *RConfig) *RConfig {
-	dataCheck(c, idCheck(), clusterCheck(), addlCheck())
+	dataCheck(c, idCheck(), clusterCheck(), addlCheck(), storePathCheck(), checkStoreTime())
 	return c
 }
 
@@ -88,6 +93,34 @@ func addlCheck() checkOption {
 		c.electionTimeout = ElectionBaseTimeOut * c.Times
 		c.heartbeatInterval = time.Duration(HeartbeatInterval*c.Times) * time.Millisecond
 		c.rpcClientCheckTime = time.Duration(RPCClientCheckTime*c.Times) * time.Millisecond
+		return nil
+	}
+}
+
+// storePathCheck check path
+func storePathCheck() checkOption {
+	return func(c *RConfig) error {
+		if c.StorePath != "" {
+			file, err := os.Stat(c.StorePath)
+			if err != nil || file.IsDir() {
+				return fmt.Errorf("the storage path is not exist or is not a directory ,error path:%s\n", c.StorePath)
+			}
+		} else {
+			if p, err := os.Getwd(); err != nil {
+				return err
+			} else {
+				c.StorePath = p
+			}
+		}
+		return nil
+	}
+}
+
+func checkStoreTime() checkOption {
+	return func(c *RConfig) error {
+		if c.StoreTime == 0 {
+			c.StoreTime = StoreTimeInterval
+		}
 		return nil
 	}
 }
