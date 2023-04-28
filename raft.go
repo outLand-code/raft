@@ -114,7 +114,7 @@ func (r *Raft) electionTimer() {
 }
 
 //election when a round of election leader happened, the term plus 1 and send RequestVote RPCs to other followers,
-//if the Raft receives true from majority of followers,becomes  leader.
+//if the Raft receives true from the majority of followers,becomes  leader.
 func (r *Raft) election() {
 
 	r.state = RCandidate
