@@ -35,6 +35,8 @@ type Raft struct {
 	electionTimeOut time.Duration
 
 	mu sync.Mutex
+
+	triggerAE chan struct{}
 }
 
 //NewRaft if global Config is null  the Raft created with local config file
@@ -57,6 +59,7 @@ func NewRaft() *Raft {
 		matchIndex:    InitIntArray(initLen, -1),
 		log:           []LogEntry{},
 		storage:       NewStorage(),
+		triggerAE:     make(chan struct{}),
 	}
 }
 
@@ -190,69 +193,90 @@ func (r *Raft) toBeLeader() {
 	r.state = RLeader
 	r.mu.Unlock()
 	tick := time.NewTicker(Config.heartbeatInterval)
+	defer tick.Stop()
 	log.Printf("toBeLeader the Raft state is %s and begin to start send heartbeat\n", transStateStr(r.state))
 	for {
-		if r.state != RLeader {
-			return
+		sendFlag := false
+		select {
+		case <-r.triggerAE:
+			sendFlag = true
+			log.Printf("tigger AE \n")
+			tick.Reset(Config.heartbeatInterval)
+		case <-tick.C:
+			log.Printf("heartbeat \n")
+			sendFlag = true
 		}
-		for id := range r.server.rpcClients {
-			if r.server.rpcClients[id] == nil {
-				continue
+		if sendFlag {
+
+			r.doAppendEntries()
+		}
+
+	}
+
+}
+
+func (r *Raft) doAppendEntries() {
+	if r.state != RLeader {
+		return
+	}
+	for id := range r.server.rpcClients {
+		if r.server.rpcClients[id] == nil {
+			continue
+		}
+		go func(id int) {
+			nextIndex := r.nextIndex[id]
+			prevIndex := nextIndex - 1
+			prevTerm := 0
+			if prevIndex > -1 {
+				log.Printf("prevIndex %d \n", prevIndex)
+				prevTerm = r.log[prevIndex].Term
 			}
-			go func(id int) {
-				nextIndex := r.nextIndex[id]
-				prevIndex := nextIndex - 1
-				prevTerm := 0
-				if prevIndex > -1 {
-					prevTerm = r.log[prevIndex].Term
-				}
 
-				heartbeat := AppendEntriesArgs{
-					Term:         r.currentTerm,
-					LeaderId:     r.id,
-					PrevLogIndex: prevIndex,
-					PrevLogTerm:  prevTerm,
-					LeaderCommit: r.commitIndex,
-					Entries:      r.log[nextIndex:],
+			heartbeat := AppendEntriesArgs{
+				Term:         r.currentTerm,
+				LeaderId:     r.id,
+				PrevLogIndex: prevIndex,
+				PrevLogTerm:  prevTerm,
+				LeaderCommit: r.commitIndex,
+				Entries:      r.log[nextIndex:],
+			}
+			reply := &AppendEntriesReply{Success: false}
+			if err := r.server.rpcClients[id].Call(RPCRegisterName+".AppendEntries", heartbeat, reply); err == nil {
+				log.Printf("peer ID:%d,AppendEntries reply %v\n", id, reply)
+				log.Printf("peer ID:%d,AppendEntries args %v\n", id, heartbeat)
+				if reply.Term > r.currentTerm {
+					r.toBeFollower(reply.Term)
+					return
 				}
-				reply := &AppendEntriesReply{Success: false}
-				if err := r.server.rpcClients[id].Call(RPCRegisterName+".AppendEntries", heartbeat, reply); err == nil {
-					log.Printf("peer ID:%d,AppendEntries reply %v\n", id, reply)
-					log.Printf("peer ID:%d,AppendEntries args %v\n", id, heartbeat)
-					if reply.Term > r.currentTerm {
-						r.toBeFollower(reply.Term)
-						return
+				if reply.Success {
+
+					r.nextIndex[id] += len(heartbeat.Entries)
+					mIndex := r.matchIndex[id]
+					r.matchIndex[id] = r.nextIndex[id] - 1
+					matchCount := 0
+					for _, mi := range r.matchIndex {
+						if mi > mIndex {
+							matchCount++
+						}
 					}
-					if reply.Success {
-
-						r.nextIndex[id] += len(heartbeat.Entries)
-						mIndex := r.matchIndex[id]
-						r.matchIndex[id] = r.nextIndex[id] - 1
-						matchCount := 0
-						for _, mi := range r.matchIndex {
-							if mi > mIndex {
-								matchCount++
-							}
-						}
-						if matchCount*2 >= len(r.matchIndex) {
-							r.commitIndex += 1
-							r.commit()
-						}
-
-					} else {
-						log.Printf("peer ID:%d reply false ,the trem and index of the log is mismatching\n", id)
-						r.nextIndex[id] = nextIndex - 1
+					if matchCount*2 >= len(r.matchIndex) {
+						r.commitIndex += 1
+						log.Printf("the Raft commit index %d\n", r.commitIndex)
+						r.commit()
 					}
 
 				} else {
-					log.Printf("peer ID:%d send heartbeat may be fail,error:%v\n", id, err)
+					log.Printf("peer ID:%d reply false ,the trem and index of the log is mismatching\n", id)
+					r.nextIndex[id] = nextIndex - 1
 				}
 
-			}(id)
-		}
-		<-tick.C
-		r.prevElectTime = time.Now()
+			} else {
+				log.Printf("peer ID:%d send heartbeat may be fail,error:%v\n", id, err)
+			}
+
+		}(id)
 	}
+	r.prevElectTime = time.Now()
 
 }
 
@@ -260,7 +284,8 @@ func (r *Raft) commit() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.state == RLeader {
-		r.persistent()
+		r.lastApplied = r.commitIndex
+		r.triggerAE <- struct{}{}
 	}
 }
 
@@ -376,12 +401,17 @@ func transStateStr(state Rstate) (strState string) {
 //SetNewLogEntry client send SetNewLogEntry RPC to any one of Raft servers,
 //reply false and return leader's address if the Raft be requested is not leader
 func (r *Raft) SetNewLogEntry(args Command, reply *ClientResp) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.state == RLeader {
 		args.Term = r.currentTerm
 		r.log = append(r.log, LogEntry{Term: r.currentTerm, Command: args})
+		r.triggerAE <- struct{}{}
+		r.persistent()
 		reply.Success = true
 	} else {
-		reply.LeaderAddress = Config.Cluster[r.votedFor]
+		log.Printf("the Raft votedFor id :%d\n", r.votedFor)
+		reply.LeaderAddress = Config.Cluster[r.votedFor-1]
 		reply.Success = false
 	}
 
