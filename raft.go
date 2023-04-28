@@ -249,19 +249,26 @@ func (r *Raft) doAppendEntries() {
 					return
 				}
 				if reply.Success {
-
 					r.nextIndex[id] += len(heartbeat.Entries)
-					mIndex := r.matchIndex[id]
 					r.matchIndex[id] = r.nextIndex[id] - 1
-					matchCount := 0
-					for _, mi := range r.matchIndex {
-						if mi > mIndex {
-							matchCount++
+
+					savedCommitIndex := r.commitIndex
+					for i := r.commitIndex + 1; i < len(r.log); i++ {
+						if r.log[i].Term == r.currentTerm {
+							matchCount := 0
+							for _, mi := range r.matchIndex {
+								if mi >= i {
+									matchCount++
+								}
+							}
+							if matchCount*2 >= len(r.matchIndex) {
+								r.commitIndex = i
+								log.Printf("the Raft commit index %d\n", r.commitIndex)
+							}
 						}
 					}
-					if matchCount*2 >= len(r.matchIndex) {
-						r.commitIndex += 1
-						log.Printf("the Raft commit index %d\n", r.commitIndex)
+					log.Printf("the Raft savedCommitIndex and commitIndex %d, %d\n", savedCommitIndex, r.commitIndex)
+					if savedCommitIndex != r.commitIndex {
 						r.commit()
 					}
 
@@ -411,7 +418,7 @@ func (r *Raft) SetNewLogEntry(args Command, reply *ClientResp) error {
 		reply.Success = true
 	} else {
 		log.Printf("the Raft votedFor id :%d\n", r.votedFor)
-		reply.LeaderAddress = Config.Cluster[r.votedFor-1]
+		reply.LeaderAddress = Config.Cluster[r.votedFor-2]
 		reply.Success = false
 	}
 
