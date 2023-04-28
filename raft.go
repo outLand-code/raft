@@ -226,10 +226,11 @@ func (r *Raft) toBeLeader() {
 					if reply.Success {
 
 						r.nextIndex[id] += len(heartbeat.Entries)
+						mIndex := r.matchIndex[id]
 						r.matchIndex[id] = r.nextIndex[id] - 1
 						matchCount := 0
 						for _, mi := range r.matchIndex {
-							if mi > nextIndex {
+							if mi > mIndex {
 								matchCount++
 							}
 						}

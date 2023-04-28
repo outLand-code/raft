@@ -14,9 +14,9 @@ type Storage struct {
 	data map[string][]byte
 }
 type storeData struct {
-	term    int
-	voteFor int
-	log     []LogEntry
+	Term    int
+	VoteFor int
+	Log     []LogEntry
 }
 
 func NewStorage() (store *Storage) {
@@ -26,15 +26,16 @@ func NewStorage() (store *Storage) {
 
 func (r *Raft) persistent() {
 	sd := &storeData{
-		term:    r.currentTerm,
-		voteFor: r.votedFor,
-		log:     r.log,
+		Term:    r.currentTerm,
+		VoteFor: r.votedFor,
+		Log:     r.log,
 	}
 	var data bytes.Buffer
 	if err := gob.NewEncoder(&data).Encode(sd); err != nil {
 		log.Printf("the Raft store data error :%v\n", err)
 	}
 	r.storage.data["currentTerm"] = data.Bytes()
+	log.Printf("the storage data :%v\n", r.storage.data)
 }
 
 func (r *Raft) loadFromStorage() {
@@ -46,10 +47,10 @@ func (r *Raft) loadFromStorage() {
 			log.Printf("the Raft load store data error:%v\n", err)
 		} else {
 			log.Printf("the Raft load data from storage term:%d ,voteForId:%d,length of log:%d\n",
-				sd.term, sd.voteFor, len(sd.log))
-			r.currentTerm = sd.term
-			r.votedFor = sd.voteFor
-			r.log = sd.log
+				sd.Term, sd.VoteFor, len(sd.Log))
+			r.currentTerm = sd.Term
+			r.votedFor = sd.VoteFor
+			r.log = sd.Log
 		}
 	}
 }
@@ -61,6 +62,7 @@ func (s *Storage) persistentToDisk() {
 	for {
 		<-tick.C
 		if data, exist := s.data["currentTerm"]; exist {
+			log.Println("start persistent to disk ")
 			store := func() error {
 				file, err := os.OpenFile(Config.StorePath+"/storage.rfdb", os.O_RDWR|os.O_CREATE|os.O_TRUNC, 0666)
 				defer file.Close()
