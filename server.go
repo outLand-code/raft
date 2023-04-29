@@ -98,12 +98,9 @@ func (s *Server) clients() {
 	}
 	for index, addr := range Config.Cluster {
 		if s.rpcClients[index] == nil {
-			c, err := rpc.Dial("tcp", addr)
-			if err != nil {
+			if err := s.tryConnect(index); err != nil {
 				log.Printf("rpc client create error from %s,error:%v\n", addr, err)
-				continue
 			}
-			s.rpcClients[index] = c
 		}
 	}
 }
@@ -116,7 +113,7 @@ func (s *Server) Call(id int, method string, args any, reply any) error {
 	err := s.rpcClients[id].Call(method, args, reply)
 	if err != nil && err == rpc.ErrShutdown {
 		log.Printf("connection is lost,retrying %d\n", id)
-		if err = s.retryConnect(id); err != nil {
+		if err = s.tryConnect(id); err != nil {
 			return err
 		}
 		return s.rpcClients[id].Call(method, args, reply)
@@ -124,11 +121,15 @@ func (s *Server) Call(id int, method string, args any, reply any) error {
 	return err
 }
 
-func (s *Server) retryConnect(id int) error {
+func (s *Server) tryConnect(id int) error {
 	client, err := rpc.Dial("tcp", Config.Cluster[id])
 	if err == nil {
 		s.rpcClients[id] = client
 		return nil
 	}
-	return fmt.Errorf("retry connect fail \n")
+	if s.rpcClients[id] != nil {
+		_ = s.rpcClients[id].Close()
+		s.rpcClients[id] = nil
+	}
+	return err
 }
