@@ -111,3 +111,24 @@ func (s *Server) clients() {
 func (s *Server) getListenAddr() string {
 	return s.listener.Addr().String()
 }
+
+func (s *Server) Call(id int, method string, args any, reply any) error {
+	err := s.rpcClients[id].Call(method, args, reply)
+	if err != nil && err == rpc.ErrShutdown {
+		log.Printf("connection is lost,retrying %d\n", id)
+		if err = s.retryConnect(id); err != nil {
+			return err
+		}
+		return s.rpcClients[id].Call(method, args, reply)
+	}
+	return err
+}
+
+func (s *Server) retryConnect(id int) error {
+	client, err := rpc.Dial("tcp", Config.Cluster[id])
+	if err == nil {
+		s.rpcClients[id] = client
+		return nil
+	}
+	return fmt.Errorf("retry connect fail \n")
+}

@@ -138,7 +138,7 @@ func (r *Raft) election() {
 				LastLogTerm:  lastTerm,
 			}
 			reply := &VoteReply{VoteGranted: false}
-			err := r.server.rpcClients[id].Call(RPCRegisterName+".RequestVote", args, reply)
+			err := r.server.Call(id, RPCRegisterName+".RequestVote", args, reply)
 			if err != nil {
 				log.Printf("RPC request is wrong ,error :%v\n", err)
 				return
@@ -241,7 +241,7 @@ func (r *Raft) doAppendEntries() {
 				Entries:      r.log[nextIndex:],
 			}
 			reply := &AppendEntriesReply{Success: false}
-			if err := r.server.rpcClients[id].Call(RPCRegisterName+".AppendEntries", heartbeat, reply); err == nil {
+			if err := r.server.Call(id, RPCRegisterName+".AppendEntries", heartbeat, reply); err == nil {
 				log.Printf("peer ID:%d,AppendEntries reply %v\n", id, reply)
 				log.Printf("peer ID:%d,AppendEntries args %v\n", id, heartbeat)
 				if reply.Term > r.currentTerm {
